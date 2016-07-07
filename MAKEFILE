@@ -1,0 +1,32 @@
+# makefile
+# Created by IBM WorkFrame/2 MakeMake at 1:06:50 on 19 Mar 2005
+#
+# The actions included in this make file are:
+#  Compile::C++ Compiler
+#  Assemble::Assembler
+#  Link::Linker
+
+.SUFFIXES:
+
+.SUFFIXES: .asm .cpp .obj
+
+.cpp.obj:
+       @echo " Compile::C++ Compiler "
+       icc.exe /Q /Ge /Rn /Gr /Gs /Gn /O /Ms /Ft- /Fa$(<B).lst /C $<
+
+.asm.obj:
+       @echo " Assemble::Assembler "
+       alp.exe -Mb +Fl -Li -Lr +Ls +Lm $<
+
+OS2PCAT.PSD: utils.obj main.obj module.def
+       @echo " Link::Linker "
+       -7 ilink.exe @<<
+/nologo /nobase /noe /optf /packc /packd /exepack:2 /a:4096 /map:$(@B).MAP /out:$(@F)
+$**
+<<
+       mapsym.exe -aln $(@B).MAP 
+       eautil.exe $@ nul /S
+
+main.obj: main.cpp
+
+utils.obj: utils.asm

@@ -1,0 +1,32 @@
+LIBRARY OS2PCAT INITGLOBAL TERMGLOBAL
+;DO NOT specify the build level string here: the PSD will trap on load !!!
+;instead, see main.cpp of how to specify build level string as a copyright comment
+;DESCRIPTION "@#Erdmann:2.0.0#@Test PSD Driver for generic PC AT"
+PROTMODE
+
+DATA SINGLE SHARED
+
+EXPORTS
+    PSD_SET_ADV_INT_MODE    = _psd_set_adv_int_mode@0
+    PSD_GET_NUM_OF_PROCS    = _psd_get_num_of_procs@0
+    PSD_END_IPI             = _psd_end_ipi@4
+    PSD_GEN_IPI             = _psd_gen_ipi@4
+    PSD_IRQ_REG             = _psd_irq_reg@4
+    PSD_INSTALL             = _psd_install@4
+    PSD_IRQ_EOI             = _psd_irq_eoi@4
+    PSD_PORT_IO             = _psd_port_io@4
+    PSD_APP_COMM            = _psd_app_comm@8
+    PSD_IRQ_MASK            = _psd_irq_mask@4
+    PSD_DEINSTALL           = _psd_deinstall@0
+    PSD_PROC_INIT           = _psd_proc_init@0
+    PSD_START_PROC          = _psd_start_proc@4
+    PSD_INIT                = _psd_init@4
+    PSD_SET_PROC_STATE      = _psd_set_proc_state@4
+    PSD_RESET_MODE          = _psd_reset_mode@0
+    PSD_QUERY_SYSTEM_TIMER  = _psd_query_system_timer@4
+    PSD_SET_SYSTEM_TIMER    = _psd_set_system_timer@4
+;    PSD_MTRACE_START        = _psd_mtrace_start@(dont know)
+
+IMPORTS
+    DOSIODELAYCNT=DOSCALLS.427
+
