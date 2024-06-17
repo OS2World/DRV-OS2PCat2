@@ -1,4 +1,4 @@
-#pragma comment(copyright,"@#Erdmann:2.0.0#@Test PSD Driver for generic PC AT")
+#pragma comment(copyright,"@#Erdmann:6.0.0#@Test PSD Driver for generic PC AT")
 #define INCL_BASE
 #include <os2.h>
 #include <psd.h>
@@ -14,6 +14,8 @@ VOID APIENTRY ReplaceMFHandler(VOID);
 #define CHAIN_INTERRUPT  ERROR_GENERIC
 #define CONTINUE_DEFAULT ERROR_GENERIC
 
+#define REALMODE_SEGSIZE 4096UL
+
 /* for the IBM VAC 3.x compiler, we need to specify these variables this way
    so that they will show up in the map file and consequently in the sym file
    I don't know why these symbols are not public
@@ -27,6 +29,13 @@ VOID APIENTRY ReplaceMFHandler(VOID);
 #pragma export(SetTimerCounter)
 #pragma export(TimerCounterVirtAddr)
 #pragma export(TimerRollOverVirtAddr)
+#pragma export(gQueryVidModeAddr)
+#pragma export(gSetVidModeAddr)
+#pragma export(gClearScreenAddr)
+#pragma export(gWriteStringAddr)
+#pragma export(gOldVideoMode)
+#pragma export(gRealModeSectionAddr)
+
 
 INSTALL gInfo={0};
 ULONG IRQ7Counter = 0UL;
@@ -37,7 +46,98 @@ ULONG QueryTimerCounter=0UL;
 ULONG SetTimerCounter=0UL;
 ULONG TimerCounterVirtAddr=0UL;
 ULONG TimerRollOverVirtAddr=0UL;
+ULONG gRealModeSectionAddr = NULL;
+ULONG gOldVideoMode = 0xFFFFFFFFUL;
+ULONG gQueryVidModeAddr = 0;
+ULONG gSetVidModeAddr = 0;
+ULONG gClearScreenAddr = 0;
+ULONG gWriteStringAddr = 0;
+ULONG gBiosDataSegAddress = 0;
 
+
+UCHAR QueryVideoModeCode[] = {0x55,                /* push bp */
+                              0xB4,0x0F,           /* mov ah,0fh */
+                              0xCD,0x10,           /* int 10h */
+                              0x66,0x0F,0xB6,0xC0, /* movzx eax,al */
+                              0x5D,                /* pop bp */
+                              0xCB                 /* retf   */
+};
+
+UCHAR SetVideoModeCode[] = {0x55,                  /* push bp */
+                            0x8A,0x04,             /* mov al,[si] */
+                            0x32,0xE4,             /* xor ah,ah */
+                            0xCD,0x10,             /* int 10h */
+                            0x66,0x33,0xC0,        /* xor eax,eax */
+                            0x5D,                  /* pop bp */
+                            0xCB                   /* retf   */
+};
+
+UCHAR ClearScreenCode[] = {0x55,                       /* push bp */
+                           0x53,                       /* push bx */
+                           0x32,0xC0,                  /* xor al,al */
+                           0xB4,0x05,                  /* mov ah,05h */
+                           0xCD,0x10,                  /* int 10h */
+                           0x32,0xC0,                  /* xor al,al */
+                           0x33,0xC9,                  /* xor cx,cx */
+                           0x8A,0x34,                  /* mov dh,[si] */
+                           0xFE,0xCE,                  /* dec dh */
+                           0x8A,0x54,0x04,             /* mov dl,[si+4] */
+                           0xFE,0xCA,                  /* dec dl */
+                           0xB7,0x0F,                  /* mov bh,0fh */
+                           0xB4,0x06,                  /* mov ah,06h */
+                           0xCD,0x10,                  /* int 10h */
+                           0x32,0xFF,                  /* xor bh,bh */
+                           0x33,0xD2,                  /* xor dx,dx */
+                           0xB4,0x02,                  /* mov ah,02h */
+                           0xCD,0x10,                  /* int 10h */
+                           0x66,0x33,0xC0,             /* xor eax,eax */
+                           0x5B,                       /* pop bx */
+                           0x5D,                       /* pop bp */
+                           0xCB                        /* retf */
+};
+
+UCHAR WriteStringCode[] = {0x55,                       /* push bp */
+                           0x53,                       /* push bx */
+                           0x06,                       /* push es */
+                           0x32,0xFF,                  /* xor bh,bh */
+                           0x33,0xD2,                  /* xor dx,dx */
+                           0xB3,0x0F,                  /* mov bl,0fh */
+                           0x8B,0x0C,                  /* mov cx,[si] */
+                           0x8C,0xD8,                  /* mov ax,ds */
+                           0x8E,0xC0,                  /* mov es,ax */
+                           0x8D,0x6C,0x04,             /* lea bp,[si+4] */
+                           0xB0,0x01,                  /* mov al,1 */
+                           0xB4,0x13,                  /* mov ah,13h */
+                           0xCD,0x10,                  /* int 10h */
+                           0x66,0x33,0xC0,             /* xor eax,eax */
+                           0x07,                       /* pop es */
+                           0x5B,                       /* pop bx */
+                           0x5D,                       /* pop bp */
+                           0xCB                        /* retf */
+};
+
+CHAR   Welcome[]      = {"---- OS2PCAT.PSD is now installed ---- \n\r"};
+
+ULONG GetVideoMode(VOID)
+{
+    CALL_REAL_MODE realMode;
+
+    realMode.function = gQueryVidModeAddr;
+    realMode.pdata    = NULL;
+    return PSDHelp(gInfo.pPSDHlpRouter,PSDHLP_CALL_REAL_MODE,&realMode);
+}
+
+ULONG WriteString(PSZ string)
+{
+    CALL_REAL_MODE realMode;
+    PULONG pTheData   = (PULONG)gRealModeSectionAddr;
+
+    realMode.function = gWriteStringAddr;
+    realMode.pdata    = gRealModeSectionAddr;
+    *pTheData         = strlen(string);
+    memcpy((PVOID)(pTheData+1),string,*pTheData);
+    return PSDHelp(gInfo.pPSDHlpRouter,PSDHLP_CALL_REAL_MODE,&realMode);
+}
 
 ULONG PSDENTRY IRQ7Handler(VOID)
 {
@@ -100,23 +200,71 @@ ULONG PSDENTRY IRQ15Handler(VOID)
 
 APIRET PSDENTRY psd_install(INSTALL *p)   /* required */
 {
-    VMALLOC vmac;
-    APIRET  rc;
+    ULONG realModeSectionAddr = 0UL;
 
     gInfo.pPSDHlpRouter = p->pPSDHlpRouter;
     gInfo.pParmString   = p->pParmString;
     gInfo.pPSDPLMA      = p->pPSDPLMA;
     gInfo.sizePLMA      = p->sizePLMA;
 
-    /* now probe if this PSD supports the current HW platform */
-    vmac.addr   = 0xF0000;
-    vmac.cbsize = 64*1024UL;
+    /* allocate below the 1 MB physical address line */
+    /* for this memory it is absolutely necessary to allocate
+       it as fixed,contiguous memory !
+       we HAVE to allocate memory below 1 MB physical address line
+       so that we can execute code in real mode !
+       That's why we copy the code from our data arrays into the
+       low memory and execute the code from low memory
+    */
+
+    APIRET  rc;
+    VMALLOC vmac;
+    vmac.addr   = 0UL;
+    vmac.cbsize = REALMODE_SEGSIZE;
+    vmac.flags  = VMALLOC_1M | VMALLOC_CONTIG | VMALLOC_FIXED;
+    rc = PSDHelp(gInfo.pPSDHlpRouter,PSDHLP_VMALLOC,&vmac);
+    if (rc == NO_ERROR) {
+      gRealModeSectionAddr = vmac.addr;
+    } /* endif */
+
+    if (gRealModeSectionAddr) {
+       ULONG offset = REALMODE_SEGSIZE*3UL/4UL,len = 0;
+
+       memset((PVOID)gRealModeSectionAddr,0,REALMODE_SEGSIZE);
+       len = sizeof(QueryVideoModeCode);
+       gQueryVidModeAddr = gRealModeSectionAddr+offset;
+       memcpy((PVOID)gQueryVidModeAddr,QueryVideoModeCode,len);
+       offset += (len+15UL) & ~15UL;
+       len = sizeof(SetVideoModeCode);
+       gSetVidModeAddr = gRealModeSectionAddr+offset;
+       memcpy((PVOID)gSetVidModeAddr,SetVideoModeCode,len);
+       offset += (len+15UL) & ~15UL;
+       len = sizeof(ClearScreenCode);
+       gClearScreenAddr = gRealModeSectionAddr+offset;
+       memcpy((PVOID)gClearScreenAddr,ClearScreenCode,len);
+       offset += (len+15UL) & ~15UL;
+       len = sizeof(WriteStringCode);
+       gWriteStringAddr = gRealModeSectionAddr+offset;
+       memcpy((PVOID)gWriteStringAddr,WriteStringCode,len);
+
+       gOldVideoMode = GetVideoMode();
+
+       WriteString(Welcome);
+
+       rc = PSDHelp(gInfo.pPSDHlpRouter,PSDHLP_VMFREE,vmac.addr);
+    } /* endif */
+
+#if 0
+    vmac.addr   = 0x400;
+    vmac.cbsize = 0x10000;
     vmac.flags  = VMALLOC_PHYS;
     rc = PSDHelp(gInfo.pPSDHlpRouter,PSDHLP_VMALLOC,&vmac);
-    if (rc == NO_ERROR)
-    {
-        rc = PSDHelp(gInfo.pPSDHlpRouter,PSDHLP_VMFREE,vmac.addr);
-    }
+    if (rc == NO_ERROR) {
+      PUSHORT pBiosResetFlag = (PUSHORT)(vmac.addr + 0x472);   /* VMALLOC_PHYS maps on a page boundary ! */
+      *pBiosResetFlag = 0x1234;                                /* no memory test on reboot */
+
+      rc = PSDHelp(gInfo.pPSDHlpRouter,PSDHLP_VMFREE,vmac.addr);
+    } /* endif */
+#endif
 
     return NO_ERROR;
 }
@@ -135,13 +283,13 @@ APIRET PSDENTRY psd_init(INIT *p)         /* required */
 
     set_irq.irq     = 7;
     set_irq.flags   = 0;
-    set_irq.vector  = 0;
+    set_irq.vector  = 0x57;
     set_irq.handler = (P_F_2)IRQ7Handler;
     rc = PSDHelp(gInfo.pPSDHlpRouter,PSDHLP_SET_IRQ,&set_irq);
 
     set_irq.irq     = 15;
     set_irq.flags   = 0;
-    set_irq.vector  = 0;
+    set_irq.vector  = 0x77;
     set_irq.handler = (P_F_2)IRQ15Handler;
     rc = PSDHelp(gInfo.pPSDHlpRouter,PSDHLP_SET_IRQ,&set_irq);
 
@@ -160,7 +308,7 @@ APIRET PSDENTRY psd_init(INIT *p)         /* required */
 
     p->flags        = INIT_GLOBAL_IRQ_ACCESS | INIT_USE_FPERR_TRAP | INIT_TIMER_CPU0;
     p->version      = 0x10000UL;
-    
+
     return NO_ERROR;
 }
 
@@ -442,6 +590,16 @@ APIRET PSDENTRY psd_set_system_timer(PSD_SETTMR *p)
 
 APIRET PSDENTRY psd_reset_mode(VOID)                 /* optional */
 {
+    ULONG flags,data;
+
+    /* unmask IRQ13 */
+    flags = IRQDisable();
+    data  = _inp(0xA1);
+    data  &= ~0x20;    /* unmask IRQ13 */
+    IoDelay();
+    _outp(0xA1,(UCHAR)data);
+    IRQEnable(flags);
+
     return NO_ERROR;
 }
 

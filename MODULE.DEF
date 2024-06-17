@@ -1,7 +1,7 @@
 LIBRARY OS2PCAT INITGLOBAL TERMGLOBAL
 ;DO NOT specify the build level string here: the PSD will trap on load !!!
 ;instead, see main.cpp of how to specify build level string as a copyright comment
-;DESCRIPTION "@#Erdmann:2.0.0#@Test PSD Driver for generic PC AT"
+;DESCRIPTION "@#Erdmann:6.0.0#@Test PSD Driver for generic PC AT"
 PROTMODE
 
 DATA SINGLE SHARED

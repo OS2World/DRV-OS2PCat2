@@ -41,23 +41,41 @@ RESUMEFLAG 	EQU 010000h
 OPSIZEBIT   EQU 400000h
 
 NewMFHandler PROC
+   pushfd
+   push eax
    mov eax,ss                       ; check stack selector if 16-bit segmented stack or 32-bit flat stack
    lar eax,eax
-   jnz short skip
+   jnz short @F
    test eax,OPSIZEBIT
    jnz short @F
    and esp,0FFFFh                   ; 16-bit stack (SP) in use, make sure we can use the 32-bit ESP (by zeroing out upper 16 bits)
 @@:
+   pop eax
+   popfd
    or DWORD PTR [esp+8],RESUMEFLAG  ; set resume flag in EFLAGS image on stack in order to prevent spurious #DB exception
                                     ; in case of simultaneous #DB and #MF exception
                                     ; see Intel manual, chapter 17.3.1.1 "Instruction-Breakpoint Exception Condition"
                                     ; (<quote>... all fault-class exception handlers should set the RF flag in the EFLAGS image</quote>)
-skip:
-   fnclex                           ; clear all pending exceptions
+   pushfd
+   push ds                          ; check if dummy error code is already pushed by kernel, SMP kernel will do so
+   push eax
+   lds  eax,FWORD PTR cs:[OldMFHandler]
+   cmp  WORD PTR [eax],0006ah       ; check for "push 00" which indicates that error code is already been pushed
+   pop  eax
+   pop  ds
+   jz short @F                      ; skip pushing error code for SMP kernel
+   jmp short pusherr
+@@:
+   popfd
+branchorg:
+   jmp  FWORD PTR cs:[OldMFHandler] ; branch to original handler
+
+pusherr:
+   popfd
    push 0                           ; push dummy error code on stack
                                     ; as the original OS/2 #MF handler of the Warp4 kernel
                                     ; erroneously expects an error code to exist on the stack
-   jmp  FWORD PTR cs:[OldMFHandler] ; branch to original handler
+   jmp short branchorg
 NewMFHandler ENDP
 
 ReplaceMFHandler PROC PUBLIC USES ebx
@@ -77,14 +95,14 @@ ReplaceMFHandler PROC PUBLIC USES ebx
    mov  WORD PTR  [OldMFHandler + 4],dx ; save 16-bit selector in upper 2 bytes of OldMFHandler
    mov  eax,cs
    shl  eax,16                      ; new selector into the upper 16 bits of first DWORD	
-   lea  edx,FLAT:NewMFHandler 
+   lea  edx,FLAT:NewMFHandler
    mov  ax,dx                       ; new lower 16 offset bits into lower 16 bits of first DWORD
    mov  ecx,[ebx+4]                 ; load second DWORD of descriptor
    and  ecx,0FFFFh                  ; zero out upper 16 bits in second DWORD
    xor  dx,dx                       ; zero out lower 16 offset bits
-   or    ecx,edx                    ; new upper 16 offset bits into upper 16 bits of second DWORD
+   or   edx,ecx                     ; new upper 16 offset bits into upper 16 bits of second DWORD
    mov  [ebx],eax                   ; overwrite first DWORD in IDT
-   mov  [ebx+4],ecx                 ; overwrite second DWORD in IDT
+   mov  [ebx+4],edx                 ; overwrite second DWORD in IDT
 
    lock or DWORD PTR [ebx+4],000008F00h ; set PRESENT bit and set type to 32-bit trap gate
 
